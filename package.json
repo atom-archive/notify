@@ -1,0 +1,26 @@
+{
+  "name": "@atom/notify",
+  "version": "1.0.0",
+  "description": "Cross-platform file system notifications",
+  "main": "lib/index.js",
+  "scripts": {
+    "test": "mocha test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atom/notify.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/atom/notify/issues"
+  },
+  "homepage": "https://github.com/atom/notify#readme",
+  "dependencies": {
+    "linebyline": "^1.3.0"
+  },
+  "devDependencies": {
+    "mocha": "^6.1.4",
+    "temp": "^0.9.0"
+  }
+}
