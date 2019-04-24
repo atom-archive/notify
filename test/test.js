@@ -1,4 +1,5 @@
 const assert = require("assert");
+const path = require("path");
 const fs = require("fs");
 const temp = require("temp");
 const Supervisor = require("..");
@@ -21,23 +22,27 @@ describe("watchPath", () => {
 
   it("tracks events in watched directories", async () => {
     const events = [];
-    await supervisor.watchPath(`${tempDirPath}`, event => events.push(event));
+    await supervisor.watchPath(tempDirPath, event => events.push(event));
 
-    fs.writeFileSync(`${tempDirPath}/foo`, "");
+    fs.writeFileSync(path.join(tempDirPath, "foo"), "");
 
     await condition(() => events.length === 1);
 
     assert.deepStrictEqual(events, [
       {
         action: "created",
-        path: `${tempDirPath}/foo`
+        path: path.join(tempDirPath, "foo")
       }
     ]);
   });
 
   it("rejects when watching a path that does not exist", async () => {
     await assert.rejects(
-      () => supervisor.watchPath(`${tempDirPath}/does/not/exist`, () => {}),
+      () =>
+        supervisor.watchPath(
+          path.join(tempDirPath, "does-not-exist"),
+          () => {}
+        ),
       "No path was found"
     );
   });
