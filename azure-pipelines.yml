@@ -14,6 +14,9 @@ pool:
   vmImage: $(imageName)
 
 steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '8.x'
   - script: |
       curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $TOOLCHAIN
       echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
@@ -31,3 +34,7 @@ steps:
     displayName: Cargo build
   - script: cargo test --all
     displayName: Cargo test
+  - script: npm install
+    displayName: Install JS dependencies
+  - script: npm test
+    displayName: Run JS tests
