@@ -1,10 +1,11 @@
+use dunce;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -97,19 +98,17 @@ impl Supervisor {
                         description: format!("Already registered a watch with id {}", id),
                     });
                 } else {
-                    match fs::canonicalize(root.as_path()) {
-                        Ok(root) => {
-                            match self.watcher.watch(root.as_path(), RecursiveMode::Recursive) {
-                                Ok(()) => {
-                                    watches.insert(id, Watch { id, root });
-                                    emit_json(Response::Ok { id });
-                                }
-                                Err(error) => emit_json(Response::Error {
-                                    id,
-                                    description: error.description().to_string(),
-                                }),
+                    match fs::canonicalize(&root) {
+                        Ok(root) => match self.watcher.watch(&root, RecursiveMode::Recursive) {
+                            Ok(()) => {
+                                watches.insert(id, Watch { id, root });
+                                emit_json(Response::Ok { id });
                             }
-                        }
+                            Err(error) => emit_json(Response::Error {
+                                id,
+                                description: error.description().to_string(),
+                            }),
+                        },
                         Err(error) => emit_json(Response::Error {
                             id,
                             description: error.description().to_string(),
@@ -119,7 +118,7 @@ impl Supervisor {
             }
             Request::Unwatch { id } => {
                 if let Some(watch) = watches.remove(&id) {
-                    self.watcher.unwatch(watch.root.as_path()).unwrap();
+                    self.watcher.unwatch(&watch.root).unwrap();
                     emit_json(Response::Ok { id });
                 } else {
                     emit_json(Response::Error {
@@ -137,26 +136,17 @@ impl Watch {
         match event {
             DebouncedEvent::Create(path) => {
                 if path.starts_with(&self.root) {
-                    emit_json(Event::Created {
-                        watch_id: self.id,
-                        path: path.clone(),
-                    });
+                    emit_json(Event::created(self.id, path));
                 }
             }
             DebouncedEvent::Write(path) => {
                 if path.starts_with(&self.root) {
-                    emit_json(Event::Modified {
-                        watch_id: self.id,
-                        path: path.clone(),
-                    });
+                    emit_json(Event::modified(self.id, path));
                 }
             }
             DebouncedEvent::Remove(path) => {
                 if path.starts_with(&self.root) {
-                    emit_json(Event::Deleted {
-                        watch_id: self.id,
-                        path: path.clone(),
-                    });
+                    emit_json(Event::deleted(self.id, path));
                 }
             }
             DebouncedEvent::Rename(old_path, new_path) => {
@@ -164,19 +154,9 @@ impl Watch {
                     old_path.starts_with(&self.root),
                     new_path.starts_with(&self.root),
                 ) {
-                    (true, true) => emit_json(Event::Renamed {
-                        watch_id: self.id,
-                        path: new_path.clone(),
-                        old_path: old_path.clone(),
-                    }),
-                    (true, false) => emit_json(Event::Deleted {
-                        watch_id: self.id,
-                        path: old_path.clone(),
-                    }),
-                    (false, true) => emit_json(Event::Created {
-                        watch_id: self.id,
-                        path: new_path.clone(),
-                    }),
+                    (true, true) => emit_json(Event::renamed(self.id, old_path, new_path)),
+                    (true, false) => emit_json(Event::deleted(self.id, old_path)),
+                    (false, true) => emit_json(Event::created(self.id, new_path)),
                     (false, false) => {}
                 }
             }
@@ -184,7 +164,35 @@ impl Watch {
             DebouncedEvent::NoticeRemove(_path) => {}
             DebouncedEvent::Chmod(_path) => {}
             DebouncedEvent::Rescan => {}
-            DebouncedEvent::Error(_error, _path) => {}
+            DebouncedEvent::Error(_error, _path) => {} // TODO: Error handling
+        }
+    }
+}
+
+impl Event {
+    fn modified(watch_id: WatchId, path: &Path) -> Self {
+        Event::Modified {
+            watch_id,
+            path: dunce::simplified(path).into(),
+        }
+    }
+    fn created(watch_id: WatchId, path: &Path) -> Self {
+        Event::Created {
+            watch_id,
+            path: dunce::simplified(path).into(),
+        }
+    }
+    fn deleted(watch_id: WatchId, path: &Path) -> Self {
+        Event::Deleted {
+            watch_id,
+            path: dunce::simplified(path).into(),
+        }
+    }
+    fn renamed(watch_id: WatchId, old_path: &Path, new_path: &Path) -> Self {
+        Event::Renamed {
+            watch_id,
+            path: dunce::simplified(new_path).into(),
+            old_path: dunce::simplified(old_path).into(),
         }
     }
 }
