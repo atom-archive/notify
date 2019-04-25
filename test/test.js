@@ -2,29 +2,29 @@ const assert = require("assert");
 const path = require("path");
 const fs = require("fs");
 const temp = require("temp");
-const Supervisor = require("..");
+const Watcher = require("..");
 
 temp.track();
 
 describe("watchPath", () => {
   let tempDirPath;
-  let supervisor;
+  let watcher;
 
   beforeEach(() => {
     tempDirPath = fs
       .realpathSync(temp.mkdirSync())
       .replace("VSSADM~1", "VssAdministrator"); // Hack to fix Azure DevOps Windows builds 🙄
-    supervisor = new Supervisor();
+    watcher = new Watcher();
   });
 
   afterEach(() => {
-    supervisor.kill();
-    supervisor = null;
+    watcher.kill();
+    watcher = null;
   });
 
   it("tracks events in watched directories", async () => {
     const events = [];
-    await supervisor.watchPath(tempDirPath, event => events.push(event));
+    await watcher.watchPath(tempDirPath, event => events.push(event));
 
     fs.writeFileSync(path.join(tempDirPath, "foo"), "");
 
@@ -41,7 +41,7 @@ describe("watchPath", () => {
   it("rejects when watching a path that does not exist", async () => {
     await assert.rejects(
       () =>
-        supervisor.watchPath(
+        watcher.watchPath(
           path.join(tempDirPath, "does-not-exist"),
           () => {}
         ),
