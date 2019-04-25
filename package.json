@@ -4,7 +4,9 @@
   "description": "Cross-platform file system notifications",
   "main": "lib/index.js",
   "scripts": {
-    "test": "mocha test"
+    "test": "mocha test",
+    "prepare": "node script/build-subprocess-binary.js",
+    "postinstall": "node script/download-subprocess-binary.js"
   },
   "repository": {
     "type": "git",
