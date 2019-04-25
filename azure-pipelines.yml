@@ -1,22 +1,31 @@
 strategy:
   matrix:
-    Mac:
-      imageName: 'macos-10.13'
+    MacOS:
+      imageName: "macos-10.13"
       toolchain: stable
+      platformSuffix: darwin
     Windows:
-      imageName: 'vs2017-win2016'
+      imageName: "vs2017-win2016"
       toolchain: stable-i686-pc-windows-msvc
+      platformSuffix: win32
     Linux:
-      imageName: 'ubuntu-16.04'
+      imageName: "ubuntu-16.04"
       toolchain: stable
+      platformSuffix: linux
+
+trigger:
+  branches:
+    include: ["*"]
+  tags:
+    include: ["*"]
 
 pool:
   vmImage: $(imageName)
 
 steps:
-  - task: NodeTool@0
-    inputs:
-      versionSpec: '8.13.x'
+  # - task: NodeTool@0
+  #   inputs:
+  #     versionSpec: '8.13.x'
   - script: |
       curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $TOOLCHAIN
       echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
@@ -30,11 +39,46 @@ steps:
       echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
     displayName: Install Rust on Windows
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
-  - script: cargo build --all
-    displayName: Cargo build
-  - script: cargo test --all
-    displayName: Cargo test
-  - script: npm install
-    displayName: Install JS dependencies
-  - script: npm test
-    displayName: Run JS tests
+  # - script: cargo build
+  #   displayName: Cargo build debug
+  # - script: cargo test --all
+  #   displayName: Cargo test
+  # - script: npm install
+  #   displayName: Install JS dependencies
+  # - script: npm test
+  #   displayName: Run JS tests
+  - script: cargo build --release
+    displayName: Cargo build release
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+  - bash: |
+      if [ -e target/release/notify-subprocess ]
+      then
+        cp target/release/notify-subprocess "$BUILD_ARTIFACTSTAGINGDIRECTORY/notify-subprocess-$PLATFORMSUFFIX"
+      fi
+      if [ -e target/release/notify-subprocess.exe ]
+      then
+        cp target/release/notify-subprocess.exe "$BUILD_ARTIFACTSTAGINGDIRECTORY/notify-subprocess-$PLATFORMSUFFIX.exe"
+      fi
+    displayName: Stage release artifacts
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+  - bash: |
+      TAG="$(Build.SourceBranch)"
+      TAG=${TAG#refs/tags/}
+      echo $TAG
+      echo "##vso[task.setvariable variable=build.releaseTag]$TAG"
+    displayName: "Assign tag variable for GitHub release"
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+  - task: GithubRelease@0
+    displayName: "Upload to GitHub release"
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+    inputs:
+      gitHubConnection: nathansobo
+      repositoryName: atom/notify
+      action: edit
+      target: $(build.sourceVersion)
+      tagSource: manual
+      tag: $(build.releaseTag)
+      assets: "$(Build.ArtifactStagingDirectory)/*"
+      title: $(build.releaseTag)
+      assetUploadMode: replace
+      addChangeLog: false

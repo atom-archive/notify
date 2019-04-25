@@ -14,7 +14,7 @@ describe("watchPath", () => {
     tempDirPath = fs
       .realpathSync(temp.mkdirSync())
       .replace("VSSADM~1", "VssAdministrator"); // Hack to fix Azure DevOps Windows builds 🙄
-    supervisor = new Supervisor();
+    supervisor = new Supervisor({ mode: "debug" });
   });
 
   afterEach(() => {
