@@ -118,8 +118,14 @@ impl Supervisor {
             }
             Request::Unwatch { id } => {
                 if let Some(watch) = watches.remove(&id) {
-                    self.watcher.unwatch(&watch.root).unwrap();
-                    emit_json(Response::Ok { id });
+                    if let Err(error) = self.watcher.unwatch(&watch.root) {
+                        emit_json(Response::Error {
+                            id,
+                            description: format!("Error unwatching: {:?}", error),
+                        });
+                    } else {
+                        emit_json(Response::Ok { id });
+                    }
                 } else {
                     emit_json(Response::Error {
                         id,
