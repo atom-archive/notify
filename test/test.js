@@ -22,29 +22,48 @@ describe("watchPath", () => {
     watcher = null;
   });
 
-  it("tracks events in watched directories", async () => {
-    const events = [];
-    await watcher.watchPath(tempDirPath, event => events.push(event));
+  it("tracks events in watched directories until subscriptions are disposed", async () => {
+    const dirEvents = [];
+    const subscription = await watcher.watchPath(tempDirPath, event =>
+      dirEvents.push(event)
+    );
 
-    fs.writeFileSync(path.join(tempDirPath, "foo"), "");
+    fs.writeFileSync(path.join(tempDirPath, "a"), "");
+    fs.mkdirSync(path.join(tempDirPath, "subdir"))
 
-    await condition(() => events.length === 1);
+    await condition(() => dirEvents.length === 2);
 
-    assert.deepStrictEqual(events, [
+    assert.deepStrictEqual(dirEvents, [
       {
         action: "created",
-        path: path.join(tempDirPath, "foo")
+        path: path.join(tempDirPath, "a")
+      },
+      {
+        action: "created",
+        path: path.join(tempDirPath, "subdir")
       }
     ]);
+
+    // Watch subdir and dispose of subscription on parent dir
+    const subdirEvents = [];
+    await watcher.watchPath(path.join(tempDirPath, "subdir"), event =>
+      subdirEvents.push(event)
+    );
+    dirEvents.length = 0;
+    await subscription.dispose();
+
+    fs.writeFileSync(path.join(tempDirPath, "subdir", "b"), "");
+
+    await condition(() => subdirEvents.length === 1);
+
+    // Event observed via watch on subdir, but not on parent dir
+    assert.strictEqual(dirEvents.length, 0);
   });
 
   it("rejects when watching a path that does not exist", async () => {
     await assert.rejects(
       () =>
-        watcher.watchPath(
-          path.join(tempDirPath, "does-not-exist"),
-          () => {}
-        ),
+        watcher.watchPath(path.join(tempDirPath, "does-not-exist"), () => {}),
       "No path was found"
     );
   });
