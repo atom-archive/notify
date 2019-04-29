@@ -24,12 +24,12 @@ describe("watchPath", () => {
 
   it("tracks events in watched directories until subscriptions are disposed", async () => {
     const dirEvents = [];
-    const subscription = await watcher.watchPath(tempDirPath, event =>
-      dirEvents.push(event)
+    const subscription = await watcher.watchPath(tempDirPath, events =>
+      dirEvents.push(...events)
     );
 
     fs.writeFileSync(path.join(tempDirPath, "a"), "");
-    fs.mkdirSync(path.join(tempDirPath, "subdir"))
+    fs.mkdirSync(path.join(tempDirPath, "subdir"));
 
     await condition(() => dirEvents.length === 2);
 
@@ -46,8 +46,8 @@ describe("watchPath", () => {
 
     // Watch subdir and dispose of subscription on parent dir
     const subdirEvents = [];
-    await watcher.watchPath(path.join(tempDirPath, "subdir"), event =>
-      subdirEvents.push(event)
+    await watcher.watchPath(path.join(tempDirPath, "subdir"), events =>
+      subdirEvents.push(...events)
     );
     dirEvents.length = 0;
     await subscription.dispose();

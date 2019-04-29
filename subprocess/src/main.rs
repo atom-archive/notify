@@ -39,18 +39,27 @@ enum Response {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventBatch {
+    watch_id: WatchId,
+    events: Vec<Event>,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(tag = "action")]
 #[serde(rename_all = "camelCase")]
 enum Event {
-    #[serde(rename_all = "camelCase")]
-    Modified { watch_id: WatchId, path: PathBuf },
-    #[serde(rename_all = "camelCase")]
-    Created { watch_id: WatchId, path: PathBuf },
-    #[serde(rename_all = "camelCase")]
-    Deleted { watch_id: WatchId, path: PathBuf },
+    Modified {
+        path: PathBuf,
+    },
+    Created {
+        path: PathBuf,
+    },
+    Deleted {
+        path: PathBuf,
+    },
     #[serde(rename_all = "camelCase")]
     Renamed {
-        watch_id: WatchId,
         path: PathBuf,
         old_path: PathBuf,
     },
@@ -65,17 +74,24 @@ impl Supervisor {
 
         let watches_2 = watches.clone();
         thread::spawn(move || {
-            for event in rx {
-                Self::notify(&watches_2, event);
+            loop {
+                if let Ok(event) = rx.recv() {
+                    let mut events = vec![event];
+                    events.extend(rx.try_iter()); // Collect more pending events without blocking
+                    Self::notify(&watches_2, events);
+                } else {
+                    break;
+                }
             }
+
         });
 
         Ok(Self { watcher, watches })
     }
 
-    fn notify(watches: &Arc<Mutex<HashMap<WatchId, Watch>>>, event: DebouncedEvent) {
+    fn notify(watches: &Arc<Mutex<HashMap<WatchId, Watch>>>, events: Vec<DebouncedEvent>) {
         for watch in watches.lock().unwrap().values() {
-            watch.notify(&event)
+            watch.notify(&events)
         }
     }
 
@@ -138,65 +154,72 @@ impl Supervisor {
 }
 
 impl Watch {
-    fn notify(&self, event: &DebouncedEvent) {
-        match event {
-            DebouncedEvent::Create(path) => {
-                if path.starts_with(&self.root) {
-                    emit_json(Event::created(self.id, path));
+    fn notify(&self, events: &[DebouncedEvent]) {
+        let mut batch = EventBatch {
+            watch_id: self.id,
+            events: Vec::new(),
+        };
+
+        for event in events {
+            match event {
+                DebouncedEvent::Create(path) => {
+                    if path.starts_with(&self.root) {
+                        batch.events.push(Event::created(path));
+                    }
                 }
-            }
-            DebouncedEvent::Write(path) => {
-                if path.starts_with(&self.root) {
-                    emit_json(Event::modified(self.id, path));
+                DebouncedEvent::Write(path) => {
+                    if path.starts_with(&self.root) {
+                        batch.events.push(Event::modified(path));
+                    }
                 }
-            }
-            DebouncedEvent::Remove(path) => {
-                if path.starts_with(&self.root) {
-                    emit_json(Event::deleted(self.id, path));
+                DebouncedEvent::Remove(path) => {
+                    if path.starts_with(&self.root) {
+                        batch.events.push(Event::deleted(path));
+                    }
                 }
-            }
-            DebouncedEvent::Rename(old_path, new_path) => {
-                match (
-                    old_path.starts_with(&self.root),
-                    new_path.starts_with(&self.root),
-                ) {
-                    (true, true) => emit_json(Event::renamed(self.id, old_path, new_path)),
-                    (true, false) => emit_json(Event::deleted(self.id, old_path)),
-                    (false, true) => emit_json(Event::created(self.id, new_path)),
-                    (false, false) => {}
+                DebouncedEvent::Rename(old_path, new_path) => {
+                    match (
+                        old_path.starts_with(&self.root),
+                        new_path.starts_with(&self.root),
+                    ) {
+                        (true, true) => batch.events.push(Event::renamed(old_path, new_path)),
+                        (true, false) => batch.events.push(Event::deleted(old_path)),
+                        (false, true) => batch.events.push(Event::created(new_path)),
+                        (false, false) => {}
+                    }
                 }
+                DebouncedEvent::NoticeWrite(_path) => {}
+                DebouncedEvent::NoticeRemove(_path) => {}
+                DebouncedEvent::Chmod(_path) => {}
+                DebouncedEvent::Rescan => {}
+                DebouncedEvent::Error(_error, _path) => {} // TODO: Error handling
             }
-            DebouncedEvent::NoticeWrite(_path) => {}
-            DebouncedEvent::NoticeRemove(_path) => {}
-            DebouncedEvent::Chmod(_path) => {}
-            DebouncedEvent::Rescan => {}
-            DebouncedEvent::Error(_error, _path) => {} // TODO: Error handling
+        }
+
+        if !batch.events.is_empty() {
+            emit_json(batch);
         }
     }
 }
 
 impl Event {
-    fn modified(watch_id: WatchId, path: &Path) -> Self {
+    fn modified(path: &Path) -> Self {
         Event::Modified {
-            watch_id,
             path: dunce::simplified(path).into(),
         }
     }
-    fn created(watch_id: WatchId, path: &Path) -> Self {
+    fn created(path: &Path) -> Self {
         Event::Created {
-            watch_id,
             path: dunce::simplified(path).into(),
         }
     }
-    fn deleted(watch_id: WatchId, path: &Path) -> Self {
+    fn deleted(path: &Path) -> Self {
         Event::Deleted {
-            watch_id,
             path: dunce::simplified(path).into(),
         }
     }
-    fn renamed(watch_id: WatchId, old_path: &Path, new_path: &Path) -> Self {
+    fn renamed(old_path: &Path, new_path: &Path) -> Self {
         Event::Renamed {
-            watch_id,
             path: dunce::simplified(new_path).into(),
             old_path: dunce::simplified(old_path).into(),
         }
