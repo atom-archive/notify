@@ -60,6 +60,34 @@ describe("watchPath", () => {
     assert.strictEqual(dirEvents.length, 0);
   });
 
+  it("handles watches for the same path to being created and destroyed", async () => {
+    let eventCount1 = 0;
+    const sub1 = await watcher.watchPath(
+      tempDirPath,
+      events => (eventCount1 += events.length)
+    );
+
+    let eventCount2 = 0;
+    const sub2 = await watcher.watchPath(
+      tempDirPath,
+      events => (eventCount2 += events.length)
+    );
+
+    fs.writeFileSync(path.join(tempDirPath, "a"), "");
+
+    await condition(() => eventCount1 === 1 && eventCount2 === 1);
+
+    await sub1.dispose();
+
+    fs.writeFileSync(path.join(tempDirPath, "b"), "");
+
+    await condition(() => eventCount2 === 2);
+
+    assert.strictEqual(eventCount1, 1);
+
+    await sub2.dispose();
+  });
+
   it("rejects when watching a path that does not exist", async () => {
     await assert.rejects(
       () =>

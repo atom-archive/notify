@@ -1,7 +1,6 @@
 use dunce;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead};
@@ -14,11 +13,11 @@ type WatchId = usize;
 
 struct Supervisor {
     watcher: RecommendedWatcher,
-    watches: Arc<Mutex<HashMap<WatchId, Watch>>>,
+    watches: Arc<Mutex<Vec<Watch>>>,
 }
 
 struct Watch {
-    id: WatchId,
+    ids: Vec<WatchId>,
     root: PathBuf,
 }
 
@@ -45,7 +44,7 @@ struct EventBatch {
     events: Vec<Event>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(tag = "action")]
 #[serde(rename_all = "camelCase")]
 enum Event {
@@ -70,7 +69,7 @@ impl Supervisor {
         let (tx, rx) = mpsc::channel();
 
         let watcher = notify::watcher(tx, Duration::from_millis(300))?;
-        let watches = Arc::new(Mutex::new(HashMap::new()));
+        let watches = Arc::new(Mutex::new(Vec::new()));
 
         let watches_2 = watches.clone();
         thread::spawn(move || {
@@ -89,8 +88,8 @@ impl Supervisor {
         Ok(Self { watcher, watches })
     }
 
-    fn notify(watches: &Arc<Mutex<HashMap<WatchId, Watch>>>, events: Vec<DebouncedEvent>) {
-        for watch in watches.lock().unwrap().values() {
+    fn notify(watches: &Arc<Mutex<Vec<Watch>>>, events: Vec<DebouncedEvent>) {
+        for watch in watches.lock().unwrap().iter() {
             watch.notify(&events)
         }
     }
@@ -104,77 +103,101 @@ impl Supervisor {
     }
 
     fn handle_request(&mut self, request: Request) {
+        match request {
+            Request::Watch { id, root } => self.watch(id, root),
+            Request::Unwatch { id } => self.unwatch(id),
+        }
+    }
+
+    fn watch(&mut self, id: WatchId, root: PathBuf) {
         let mut watches = self.watches.lock().unwrap();
 
-        match request {
-            Request::Watch { id, root } => {
-                if watches.contains_key(&id) {
-                    emit_json(Response::Error {
-                        id,
-                        description: format!("Already registered a watch with id {}", id),
-                    });
+        match fs::canonicalize(&root) {
+            Ok(root) => {
+                if let Some(watch) = watches.iter_mut().find(|watch| watch.root == root) {
+                    watch.ids.push(id);
+                    emit_json(Response::Ok { id });
                 } else {
-                    match fs::canonicalize(&root) {
-                        Ok(root) => match self.watcher.watch(&root, RecursiveMode::Recursive) {
-                            Ok(()) => {
-                                watches.insert(id, Watch { id, root });
-                                emit_json(Response::Ok { id });
-                            }
-                            Err(error) => emit_json(Response::Error {
-                                id,
-                                description: error.description().to_string(),
-                            }),
-                        },
-                        Err(error) => emit_json(Response::Error {
-                            id,
-                            description: error.description().to_string(),
-                        }),
-                    }
-                }
-            }
-            Request::Unwatch { id } => {
-                if let Some(watch) = watches.remove(&id) {
-                    if let Err(error) = self.watcher.unwatch(&watch.root) {
+                    if let Err(error) = self.watcher.watch(&root, RecursiveMode::Recursive) {
                         emit_json(Response::Error {
                             id,
-                            description: format!("Error unwatching: {:?}", error),
+                            description: error.description().to_string(),
                         });
                     } else {
+                        watches.push(Watch {
+                            root,
+                            ids: vec![id],
+                        });
                         emit_json(Response::Ok { id });
                     }
-                } else {
-                    emit_json(Response::Error {
-                        id,
-                        description: format!("No watch exists with id {}", id),
-                    });
                 }
             }
+            Err(error) => emit_json(Response::Error {
+                id,
+                description: error.description().to_string(),
+            }),
+        }
+    }
+
+    fn unwatch(&mut self, id: WatchId) {
+        let mut watches = self.watches.lock().unwrap();
+
+        let mut found_id = false;
+        let mut unwatch_error = None;
+        let mut index_to_remove = None;
+
+        for (i, watch) in watches.iter_mut().enumerate() {
+            if let Some(j) = watch.ids.iter().position(|watch_id| *watch_id == id) {
+                found_id = true;
+                watch.ids.remove(j);
+                if watch.ids.is_empty() {
+                    index_to_remove = Some(i);
+                    if let Err(error) = self.watcher.unwatch(&watch.root) {
+                        unwatch_error = Some(error);
+                    }
+                }
+            }
+        }
+
+        if let Some(i) = index_to_remove {
+            watches.remove(i);
+        }
+
+        if let Some(error) = unwatch_error {
+            emit_json(Response::Error {
+                id,
+                description: format!("Error unwatching: {:?}", error),
+            });
+        } else if found_id {
+            emit_json(Response::Ok { id });
+        } else {
+            emit_json(Response::Error {
+                id,
+                description: format!("No watch found for id: {:?}", id),
+            });
         }
     }
 }
 
 impl Watch {
     fn notify(&self, events: &[DebouncedEvent]) {
-        let mut batch = EventBatch {
-            watch_id: self.id,
-            events: Vec::new(),
-        };
+        let mut batch = Vec::new();
 
         for event in events {
             match event {
                 DebouncedEvent::Create(path) => {
                     if path.starts_with(&self.root) {
-                        batch.events.push(Event::created(path));
+                        batch.push(Event::created(path));
                     }
                 }
                 DebouncedEvent::Write(path) => {
                     if path.starts_with(&self.root) {
-                        batch.events.push(Event::modified(path));
+                        batch.push(Event::modified(path));
                     }
                 }
                 DebouncedEvent::Remove(path) => {
                     if path.starts_with(&self.root) {
-                        batch.events.push(Event::deleted(path));
+                        batch.push(Event::deleted(path));
                     }
                 }
                 DebouncedEvent::Rename(old_path, new_path) => {
@@ -182,9 +205,9 @@ impl Watch {
                         old_path.starts_with(&self.root),
                         new_path.starts_with(&self.root),
                     ) {
-                        (true, true) => batch.events.push(Event::renamed(old_path, new_path)),
-                        (true, false) => batch.events.push(Event::deleted(old_path)),
-                        (false, true) => batch.events.push(Event::created(new_path)),
+                        (true, true) => batch.push(Event::renamed(old_path, new_path)),
+                        (true, false) => batch.push(Event::deleted(old_path)),
+                        (false, true) => batch.push(Event::created(new_path)),
                         (false, false) => {}
                     }
                 }
@@ -196,8 +219,13 @@ impl Watch {
             }
         }
 
-        if !batch.events.is_empty() {
-            emit_json(batch);
+        if !batch.is_empty() {
+            for id in &self.ids {
+                emit_json(EventBatch {
+                    watch_id: *id, events: batch.clone()
+                });
+            }
+
         }
     }
 }
