@@ -1,0 +1,9 @@
+node_modules
+subprocess
+target
+test
+azure-pipelines.yml
+Cargo.*
+notify-subprocess-darwin
+notify-subprocess-linux
+notify-subprocess-win32
