@@ -25,6 +25,8 @@ async function downloadBinary(url) {
         break;
       }
       case 200: {
+        fs.writeFileSync(binaryPath, "");
+        fs.chmodSync(binaryPath, 0o755);
         response.pipe(fs.createWriteStream(binaryPath));
         return;
       }
