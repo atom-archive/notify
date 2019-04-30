@@ -95,6 +95,12 @@ describe("watchPath", () => {
       "No path was found"
     );
   });
+
+  it("allows dispose to be called multiple times without errors", async () => {
+    const sub = await watcher.watchPath(tempDirPath, () => {});
+    await sub.dispose();
+    await sub.dispose();
+  });
 });
 
 function condition(fn) {
