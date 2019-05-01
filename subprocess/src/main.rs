@@ -159,7 +159,28 @@ impl Supervisor {
         }
 
         if let Some(i) = index_to_remove {
-            watches.remove(i);
+            let removed = watches.remove(i);
+
+            // On Linux, unwatching a directory seems to destroy all watches on descendant
+            // directories, so we rewatch any descendant directories that are being monitored.
+            if cfg!(target_os = "linux") {
+                for watch in watches.iter() {
+                    if watch.root.starts_with(&removed.root) {
+                        if let Err(error) =
+                            self.watcher.watch(&watch.root, RecursiveMode::Recursive)
+                        {
+                            emit_json(Response::Error {
+                                id,
+                                description: format!(
+                                    "Error re-watching descendant of unwatched directory: {:?}",
+                                    error
+                                ),
+                            });
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         if let Some(error) = unwatch_error {
