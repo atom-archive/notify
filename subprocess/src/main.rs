@@ -82,7 +82,6 @@ impl Supervisor {
                     break;
                 }
             }
-
         });
 
         Ok(Self { watcher, watches })
@@ -222,10 +221,10 @@ impl Watch {
         if !batch.is_empty() {
             for id in &self.ids {
                 emit_json(EventBatch {
-                    watch_id: *id, events: batch.clone()
+                    watch_id: *id,
+                    events: batch.clone(),
                 });
             }
-
         }
     }
 }
