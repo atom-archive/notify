@@ -94,6 +94,7 @@ impl Supervisor {
     }
 
     fn handle_requests(&mut self) {
+        println!("Listening");
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             let request = serde_json::from_str(&line.unwrap()).unwrap();
@@ -109,6 +110,8 @@ impl Supervisor {
     }
 
     fn watch(&mut self, id: WatchId, root: PathBuf) {
+        panic!("HALP!");
+        
         let mut watches = self.watches.lock().unwrap();
 
         match fs::canonicalize(&root) {
