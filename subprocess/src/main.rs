@@ -9,6 +9,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+type RequestId = usize;
 type WatchId = usize;
 
 struct Supervisor {
@@ -17,7 +18,7 @@ struct Supervisor {
 }
 
 struct Watch {
-    ids: Vec<WatchId>,
+    ids: Vec<usize>,
     root: PathBuf,
 }
 
@@ -25,16 +26,32 @@ struct Watch {
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 enum Request {
-    Watch { id: WatchId, root: PathBuf },
-    Unwatch { id: WatchId },
+    #[serde(rename_all = "camelCase")]
+    Watch {
+        request_id: RequestId,
+        watch_id: WatchId,
+        root: PathBuf,
+    },
+    #[serde(rename_all = "camelCase")]
+    Unwatch {
+        request_id: RequestId,
+        watch_id: WatchId,
+    },
+    #[serde(rename_all = "camelCase")]
+    UnwatchAll { request_id: RequestId },
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 enum Response {
-    Ok { id: WatchId },
-    Error { id: WatchId, description: String },
+    #[serde(rename_all = "camelCase")]
+    Ok { request_id: RequestId },
+    #[serde(rename_all = "camelCase")]
+    Error {
+        request_id: WatchId,
+        description: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -103,42 +120,50 @@ impl Supervisor {
 
     fn handle_request(&mut self, request: Request) {
         match request {
-            Request::Watch { id, root } => self.watch(id, root),
-            Request::Unwatch { id } => self.unwatch(id),
+            Request::Watch {
+                request_id,
+                watch_id,
+                root,
+            } => self.watch(request_id, watch_id, root),
+            Request::Unwatch {
+                request_id,
+                watch_id,
+            } => self.unwatch(request_id, watch_id),
+            Request::UnwatchAll { request_id } => self.unwatch_all(request_id),
         }
     }
 
-    fn watch(&mut self, id: WatchId, root: PathBuf) {
+    fn watch(&mut self, request_id: RequestId, watch_id: WatchId, root: PathBuf) {
         let mut watches = self.watches.lock().unwrap();
 
         match fs::canonicalize(&root) {
             Ok(root) => {
                 if let Some(watch) = watches.iter_mut().find(|watch| watch.root == root) {
-                    watch.ids.push(id);
-                    emit_json(Response::Ok { id });
+                    watch.ids.push(watch_id);
+                    emit_json(Response::Ok { request_id });
                 } else {
                     if let Err(error) = self.watcher.watch(&root, RecursiveMode::Recursive) {
                         emit_json(Response::Error {
-                            id,
+                            request_id,
                             description: error.description().to_string(),
                         });
                     } else {
                         watches.push(Watch {
                             root,
-                            ids: vec![id],
+                            ids: vec![watch_id],
                         });
-                        emit_json(Response::Ok { id });
+                        emit_json(Response::Ok { request_id });
                     }
                 }
             }
             Err(error) => emit_json(Response::Error {
-                id,
+                request_id,
                 description: error.description().to_string(),
             }),
         }
     }
 
-    fn unwatch(&mut self, id: WatchId) {
+    fn unwatch(&mut self, request_id: RequestId, watch_id: WatchId) {
         let mut watches = self.watches.lock().unwrap();
 
         let mut found_id = false;
@@ -146,7 +171,7 @@ impl Supervisor {
         let mut index_to_remove = None;
 
         for (i, watch) in watches.iter_mut().enumerate() {
-            if let Some(j) = watch.ids.iter().position(|watch_id| *watch_id == id) {
+            if let Some(j) = watch.ids.iter().position(|id| *id == watch_id) {
                 found_id = true;
                 watch.ids.remove(j);
                 if watch.ids.is_empty() {
@@ -170,7 +195,7 @@ impl Supervisor {
                             self.watcher.watch(&watch.root, RecursiveMode::Recursive)
                         {
                             emit_json(Response::Error {
-                                id,
+                                request_id,
                                 description: format!(
                                     "Error re-watching descendant of unwatched directory: {:?}",
                                     error
@@ -185,17 +210,33 @@ impl Supervisor {
 
         if let Some(error) = unwatch_error {
             emit_json(Response::Error {
-                id,
+                request_id,
                 description: format!("Error unwatching: {:?}", error),
             });
         } else if found_id {
-            emit_json(Response::Ok { id });
+            emit_json(Response::Ok { request_id });
         } else {
             emit_json(Response::Error {
-                id,
-                description: format!("No watch found for id: {:?}", id),
+                request_id,
+                description: format!("No watch found for id: {:?}", watch_id),
             });
         }
+    }
+
+    fn unwatch_all(&mut self, request_id: RequestId) {
+        let mut watches = self.watches.lock().unwrap();
+
+        for watch in watches.drain(..) {
+            if let Err(error) = self.watcher.unwatch(&watch.root) {
+                emit_json(Response::Error {
+                    request_id,
+                    description: format!("Error unwatching {:?}: {:?}", watch.root, error),
+                });
+                return;
+            }
+        }
+
+        emit_json(Response::Ok { request_id });
     }
 }
 
