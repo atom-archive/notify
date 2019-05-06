@@ -25,7 +25,7 @@ struct Watch {
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
-enum Request {
+enum Incoming {
     #[serde(rename_all = "camelCase")]
     Watch {
         request_id: RequestId,
@@ -44,21 +44,24 @@ enum Request {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
-enum Response {
+enum Outgoing {
     #[serde(rename_all = "camelCase")]
-    Ok { request_id: RequestId },
+    OkResponse {
+        request_id: RequestId,
+    },
     #[serde(rename_all = "camelCase")]
-    Error {
+    ErrorResponse {
         request_id: WatchId,
         description: String,
     },
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EventBatch {
-    watch_id: WatchId,
-    events: Vec<Event>,
+    #[serde(rename_all = "camelCase")]
+    WatchEvents {
+        watch_id: WatchId,
+        events: Vec<Event>,
+    },
+    WatcherError {
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -78,6 +81,10 @@ enum Event {
     Renamed {
         path: PathBuf,
         old_path: PathBuf,
+    },
+    Error {
+        path: PathBuf,
+        description: String,
     },
 }
 
@@ -108,6 +115,15 @@ impl Supervisor {
         for watch in watches.lock().unwrap().iter() {
             watch.notify(&events)
         }
+
+        // Emit errors that aren't associated with paths as top-level events
+        for event in &events {
+            if let DebouncedEvent::Error(error, None) = event {
+                emit_json(Outgoing::WatcherError {
+                    description: String::from(error.description()),
+                })
+            }
+        }
     }
 
     fn handle_requests(&mut self) {
@@ -118,18 +134,18 @@ impl Supervisor {
         }
     }
 
-    fn handle_request(&mut self, request: Request) {
+    fn handle_request(&mut self, request: Incoming) {
         match request {
-            Request::Watch {
+            Incoming::Watch {
                 request_id,
                 watch_id,
                 root,
             } => self.watch(request_id, watch_id, root),
-            Request::Unwatch {
+            Incoming::Unwatch {
                 request_id,
                 watch_id,
             } => self.unwatch(request_id, watch_id),
-            Request::UnwatchAll { request_id } => self.unwatch_all(request_id),
+            Incoming::UnwatchAll { request_id } => self.unwatch_all(request_id),
         }
     }
 
@@ -140,10 +156,10 @@ impl Supervisor {
             Ok(root) => {
                 if let Some(watch) = watches.iter_mut().find(|watch| watch.root == root) {
                     watch.ids.push(watch_id);
-                    emit_json(Response::Ok { request_id });
+                    emit_json(Outgoing::OkResponse { request_id });
                 } else {
                     if let Err(error) = self.watcher.watch(&root, RecursiveMode::Recursive) {
-                        emit_json(Response::Error {
+                        emit_json(Outgoing::ErrorResponse {
                             request_id,
                             description: error.description().to_string(),
                         });
@@ -152,11 +168,11 @@ impl Supervisor {
                             root,
                             ids: vec![watch_id],
                         });
-                        emit_json(Response::Ok { request_id });
+                        emit_json(Outgoing::OkResponse { request_id });
                     }
                 }
             }
-            Err(error) => emit_json(Response::Error {
+            Err(error) => emit_json(Outgoing::ErrorResponse {
                 request_id,
                 description: error.description().to_string(),
             }),
@@ -194,7 +210,7 @@ impl Supervisor {
                         if let Err(error) =
                             self.watcher.watch(&watch.root, RecursiveMode::Recursive)
                         {
-                            emit_json(Response::Error {
+                            emit_json(Outgoing::ErrorResponse {
                                 request_id,
                                 description: format!(
                                     "Error re-watching descendant of unwatched directory: {:?}",
@@ -209,14 +225,14 @@ impl Supervisor {
         }
 
         if let Some(error) = unwatch_error {
-            emit_json(Response::Error {
+            emit_json(Outgoing::ErrorResponse {
                 request_id,
                 description: format!("Error unwatching: {:?}", error),
             });
         } else if found_id {
-            emit_json(Response::Ok { request_id });
+            emit_json(Outgoing::OkResponse { request_id });
         } else {
-            emit_json(Response::Error {
+            emit_json(Outgoing::ErrorResponse {
                 request_id,
                 description: format!("No watch found for id: {:?}", watch_id),
             });
@@ -228,7 +244,7 @@ impl Supervisor {
 
         for watch in watches.drain(..) {
             if let Err(error) = self.watcher.unwatch(&watch.root) {
-                emit_json(Response::Error {
+                emit_json(Outgoing::ErrorResponse {
                     request_id,
                     description: format!("Error unwatching {:?}: {:?}", watch.root, error),
                 });
@@ -236,7 +252,7 @@ impl Supervisor {
             }
         }
 
-        emit_json(Response::Ok { request_id });
+        emit_json(Outgoing::OkResponse { request_id });
     }
 }
 
@@ -272,17 +288,23 @@ impl Watch {
                         (false, false) => {}
                     }
                 }
+                DebouncedEvent::Error(error, path) => {
+                    if let Some(path) = path {
+                        if path.starts_with(&self.root) {
+                            batch.push(Event::error(path, error));
+                        }
+                    }
+                }
                 DebouncedEvent::NoticeWrite(_path) => {}
                 DebouncedEvent::NoticeRemove(_path) => {}
                 DebouncedEvent::Chmod(_path) => {}
                 DebouncedEvent::Rescan => {}
-                DebouncedEvent::Error(_error, _path) => {} // TODO: Error handling
             }
         }
 
         if !batch.is_empty() {
             for id in &self.ids {
-                emit_json(EventBatch {
+                emit_json(Outgoing::WatchEvents {
                     watch_id: *id,
                     events: batch.clone(),
                 });
@@ -313,13 +335,26 @@ impl Event {
             old_path: dunce::simplified(old_path).into(),
         }
     }
+    fn error(path: &Path, error: &notify::Error) -> Self {
+        Event::Error {
+            path: dunce::simplified(path).into(),
+            description: String::from(error.description()),
+        }
+    }
 }
 
-fn emit_json<T: Serialize>(message: T) {
+fn emit_json(message: Outgoing) {
     println!("{}", &serde_json::to_string(&message).unwrap());
 }
 
 fn main() {
-    let mut supervisor = Supervisor::new().unwrap();
-    supervisor.handle_requests();
+    match Supervisor::new() {
+        Ok(mut supervisor) => supervisor.handle_requests(),
+        Err(error) => {
+            emit_json(Outgoing::WatcherError {
+                description: String::from(error.description()),
+            });
+            eprintln!("Error creating notify watcher: {:?}", error);
+        }
+    }
 }
