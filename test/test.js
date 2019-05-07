@@ -103,10 +103,13 @@ describe("watchPath", () => {
   });
 
   it("does not error when unwatching after the watcher has been killed", async () => {
-    const sub = await watcher.watchPath(tempDirPath, () => {});
-    await watcher.kill()
-    await sub.dispose();
-  })
+    const sub1 = await watcher.watchPath(tempDirPath, () => {});
+    const sub2 = await watcher.watchPath(tempDirPath, () => {});
+    const killPromise = watcher.kill();
+    await sub1.dispose();
+    await killPromise;
+    await sub2.dispose();
+  });
 });
 
 function condition(fn) {
