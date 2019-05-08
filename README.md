@@ -2,6 +2,8 @@
 
 This Node.js module recursively-observes directory trees on the file system on macOS, Windows, and Linux. It delegates the heavy lifting to the Rust [`notify`](https://github.com/passcod/notify) crate, which is wrapped in a simple executable that is spawned as a subprocess.
 
+For more background on the reasons for this module's existence, [see this pull request](https://github.com/atom/atom/pull/19244).
+
 ## API
 
 ```js
