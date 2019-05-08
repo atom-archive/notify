@@ -1,6 +1,6 @@
 {
   "name": "@atom/notify",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Cross-platform file system notifications",
   "main": "lib/index.js",
   "scripts": {
