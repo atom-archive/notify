@@ -1,5 +1,5 @@
 use dunce;
-use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{DebouncedEvent, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fs;
@@ -8,12 +8,21 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use structopt::StructOpt;
 
 type RequestId = usize;
 type WatchId = usize;
 
-struct Supervisor {
-    watcher: RecommendedWatcher,
+#[derive(StructOpt, Debug)]
+#[structopt(name = "subprocess")]
+struct Opt {
+    /// Enable polling mode with the specified interval in milliseconds
+    #[structopt(long = "poll-interval")]
+    poll_interval: Option<u64>,
+}
+
+struct Supervisor<W> {
+    watcher: W,
     watches: Arc<Mutex<Vec<Watch>>>,
 }
 
@@ -88,11 +97,11 @@ enum Event {
     },
 }
 
-impl Supervisor {
-    fn new() -> Result<Self, notify::Error> {
+impl<W: Watcher> Supervisor<W> {
+    fn new(delay: Duration) -> Result<Self, notify::Error> {
         let (tx, rx) = mpsc::channel();
 
-        let watcher = notify::watcher(tx, Duration::from_millis(300))?;
+        let watcher = W::new(tx, delay)?;
         let watches = Arc::new(Mutex::new(Vec::new()));
 
         let watches_2 = watches.clone();
@@ -348,13 +357,27 @@ fn emit_json(message: Outgoing) {
 }
 
 fn main() {
-    match Supervisor::new() {
-        Ok(mut supervisor) => supervisor.handle_requests(),
-        Err(error) => {
-            emit_json(Outgoing::WatcherError {
-                description: String::from(error.description()),
-            });
-            eprintln!("Error creating notify watcher: {:?}", error);
+    let opt = Opt::from_args();
+
+    if let Some(poll_interval) = opt.poll_interval {
+        match Supervisor::<PollWatcher>::new(Duration::from_millis(poll_interval)) {
+            Ok(mut supervisor) => supervisor.handle_requests(),
+            Err(error) => {
+                emit_json(Outgoing::WatcherError {
+                    description: String::from(error.description()),
+                });
+                eprintln!("Error creating notify watcher: {:?}", error);
+            }
         }
-    }
+    } else {
+        match Supervisor::<RecommendedWatcher>::new(Duration::from_millis(100)) {
+            Ok(mut supervisor) => supervisor.handle_requests(),
+            Err(error) => {
+                emit_json(Outgoing::WatcherError {
+                    description: String::from(error.description()),
+                });
+                eprintln!("Error creating notify watcher: {:?}", error);
+            }
+        }
+    };
 }
