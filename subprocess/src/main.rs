@@ -1,4 +1,3 @@
-use dunce;
 use notify::{DebouncedEvent, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -325,28 +324,28 @@ impl Watch {
 impl Event {
     fn modified(path: &Path) -> Self {
         Event::Modified {
-            path: dunce::simplified(path).into(),
+            path: normalize_path(path),
         }
     }
     fn created(path: &Path) -> Self {
         Event::Created {
-            path: dunce::simplified(path).into(),
+            path: normalize_path(path),
         }
     }
     fn deleted(path: &Path) -> Self {
         Event::Deleted {
-            path: dunce::simplified(path).into(),
+            path: normalize_path(path),
         }
     }
     fn renamed(old_path: &Path, new_path: &Path) -> Self {
         Event::Renamed {
-            path: dunce::simplified(new_path).into(),
-            old_path: dunce::simplified(old_path).into(),
+            path: normalize_path(new_path),
+            old_path: normalize_path(old_path),
         }
     }
     fn error(path: &Path, error: &notify::Error) -> Self {
         Event::Error {
-            path: dunce::simplified(path).into(),
+            path: normalize_path(path),
             description: String::from(error.description()),
         }
     }
@@ -354,6 +353,30 @@ impl Event {
 
 fn emit_json(message: Outgoing) {
     println!("{}", &serde_json::to_string(&message).unwrap());
+}
+
+#[cfg(windows)]
+fn normalize_path(path: &Path) -> PathBuf {
+    use winapi::um::fileapi::GetShortPathNameW;
+
+    let path = unsafe {
+        let size = GetShortPathNameW(path.as_os_str() as LPWSTR, std::ptr::null_mut(), 0);
+        let short_path = OsString::with_capacity(size);
+        let copied = GetShortPathNameW(
+            path.as_os_str() as LPWSTR,
+            &mut short_path.as_os_str(),
+            size,
+        );
+        assert!(size == copied);
+        short_path.into()
+    };
+
+    dunce::simplified(path).into();
+}
+
+#[cfg(not(windows))]
+fn normalize_path(path: &Path) -> PathBuf {
+    path.into()
 }
 
 fn main() {
