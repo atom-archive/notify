@@ -12,9 +12,7 @@ for (const pollInterval of [0, 1]) {
     let watcher;
 
     beforeEach(() => {
-      tempDirPath = fs
-        .realpathSync(temp.mkdirSync())
-        .replace("VSSADM~1", "VssAdministrator"); // Hack to fix Azure DevOps Windows builds 🙄
+      tempDirPath = fs.realpathSync(temp.mkdirSync());
       watcher = new Watcher({ pollInterval });
     });
 
@@ -127,13 +125,10 @@ for (const pollInterval of [0, 1]) {
         }
       }, 10);
 
-      const timeout = global.setTimeout(
-        () => {
-          global.clearInterval(interval);
-          reject(timeoutError);
-        },
-        3000
-      );
+      const timeout = global.setTimeout(() => {
+        global.clearInterval(interval);
+        reject(timeoutError);
+      }, 3000);
     });
   }
 }

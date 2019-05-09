@@ -1,8 +1,6 @@
-use dunce;
 use notify::{DebouncedEvent, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -161,30 +159,22 @@ impl<W: Watcher> Supervisor<W> {
     fn watch(&mut self, request_id: RequestId, watch_id: WatchId, root: PathBuf) {
         let mut watches = self.watches.lock().unwrap();
 
-        match fs::canonicalize(&root) {
-            Ok(root) => {
-                if let Some(watch) = watches.iter_mut().find(|watch| watch.root == root) {
-                    watch.ids.push(watch_id);
-                    emit_json(Outgoing::OkResponse { request_id });
-                } else {
-                    if let Err(error) = self.watcher.watch(&root, RecursiveMode::Recursive) {
-                        emit_json(Outgoing::ErrorResponse {
-                            request_id,
-                            description: error.description().to_string(),
-                        });
-                    } else {
-                        watches.push(Watch {
-                            root,
-                            ids: vec![watch_id],
-                        });
-                        emit_json(Outgoing::OkResponse { request_id });
-                    }
-                }
+        if let Some(watch) = watches.iter_mut().find(|watch| watch.root == root) {
+            watch.ids.push(watch_id);
+            emit_json(Outgoing::OkResponse { request_id });
+        } else {
+            if let Err(error) = self.watcher.watch(&root, RecursiveMode::Recursive) {
+                emit_json(Outgoing::ErrorResponse {
+                    request_id,
+                    description: error.description().to_string(),
+                });
+            } else {
+                watches.push(Watch {
+                    root,
+                    ids: vec![watch_id],
+                });
+                emit_json(Outgoing::OkResponse { request_id });
             }
-            Err(error) => emit_json(Outgoing::ErrorResponse {
-                request_id,
-                description: error.description().to_string(),
-            }),
         }
     }
 
@@ -324,29 +314,23 @@ impl Watch {
 
 impl Event {
     fn modified(path: &Path) -> Self {
-        Event::Modified {
-            path: dunce::simplified(path).into(),
-        }
+        Event::Modified { path: path.into() }
     }
     fn created(path: &Path) -> Self {
-        Event::Created {
-            path: dunce::simplified(path).into(),
-        }
+        Event::Created { path: path.into() }
     }
     fn deleted(path: &Path) -> Self {
-        Event::Deleted {
-            path: dunce::simplified(path).into(),
-        }
+        Event::Deleted { path: path.into() }
     }
     fn renamed(old_path: &Path, new_path: &Path) -> Self {
         Event::Renamed {
-            path: dunce::simplified(new_path).into(),
-            old_path: dunce::simplified(old_path).into(),
+            path: new_path.into(),
+            old_path: old_path.into(),
         }
     }
     fn error(path: &Path, error: &notify::Error) -> Self {
         Event::Error {
-            path: dunce::simplified(path).into(),
+            path: path.into(),
             description: String::from(error.description()),
         }
     }
