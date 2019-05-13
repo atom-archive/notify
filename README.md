@@ -50,6 +50,16 @@ By default, the an appropriate implementation of the watcher is selected for the
 const watcher = new Watcher({pollInterval: 1000});
 ```
 
+### Bin path transformation
+
+If you have a weird packaging situation (for example, this library being archived in an Electron ASAR archive), you may need to modify the path to the subprocess executable. You can pass a `transformBinPath` function to the `Watcher` constructor as a parameter to do so.
+
+```js
+const watcher = new Watcher({
+  transformBinPath: p => p.replace(/\bapp\.asar\b/, "app.asar.unpacked")
+});
+```
+
 ## Project structure
 
 This library spawns a subprocess that speaks a simple line-oriented JSON protocol over stdin and stdout. The Rust source for the subprocess is located in [`subprocess`](./subprocess).
