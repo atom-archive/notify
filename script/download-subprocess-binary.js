@@ -8,12 +8,14 @@ let artifactName = `notify-subprocess-${process.platform}`;
 if (process.platform === "win32") artifactName += ".exe";
 const artifactUrl = `https://github.com/atom/notify/releases/download/v${packageVersion}/${artifactName}`;
 
-const binaryPath = path.join(__dirname, "..", artifactName);
+const binDirPath = path.join(__dirname, "..", "bin");
+const binPath = path.join(binDirPath, artifactName);
 
 console.log(
   "Downloading notify subprocess binary from GitHub release:",
   artifactUrl
 );
+if (!fs.existsSync(binDirPath)) fs.mkdirSync(binDirPath);
 downloadBinary(artifactUrl);
 
 async function downloadBinary(url) {
@@ -25,9 +27,9 @@ async function downloadBinary(url) {
         break;
       }
       case 200: {
-        fs.writeFileSync(binaryPath, "");
-        fs.chmodSync(binaryPath, 0o755);
-        response.pipe(fs.createWriteStream(binaryPath));
+        fs.writeFileSync(binPath, "");
+        fs.chmodSync(binPath, 0o755);
+        response.pipe(fs.createWriteStream(binPath));
         return;
       }
       default: {

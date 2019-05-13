@@ -23,14 +23,12 @@ let srcPath = path.join(
 );
 if (process.platform === "win32") srcPath += ".exe";
 
-let dstPath = path.join(
-  __dirname,
-  "..",
-  `notify-subprocess-${process.platform}`
-);
+let binDirPath = path.join(__dirname, "..", "bin");
+let dstPath = path.join(binDirPath, `notify-subprocess-${process.platform}`);
 if (process.platform === "win32") dstPath += ".exe";
 
 console.log(
   "Overwriting downloaded subprocess binary with locally-built version for development"
 );
+if (!fs.existsSync(binDirPath)) fs.mkdirSync(binDirPath)
 fs.copyFileSync(srcPath, dstPath);
