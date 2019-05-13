@@ -21,7 +21,9 @@ for (const pollInterval of [0, 1]) {
       watcher = null;
     });
 
-    it("tracks events in watched directories until subscriptions are disposed", async () => {
+    it("tracks events in watched directories until subscriptions are disposed", async function() {
+      if (pollInterval) this.timeout(5000);
+
       const dirEvents = [];
       const subscription = await watcher.watchPath(tempDirPath, events =>
         dirEvents.push(...events)
@@ -60,7 +62,9 @@ for (const pollInterval of [0, 1]) {
       assert.strictEqual(dirEvents.length, 0);
     });
 
-    it("handles watches for the same path to being created and destroyed", async () => {
+    it("handles watches for the same path to being created and destroyed", async function() {
+      if (pollInterval) this.timeout(5000);
+
       let eventCount1 = 0;
       const sub1 = await watcher.watchPath(
         tempDirPath,
